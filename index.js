@@ -8,7 +8,7 @@ app.use(cors())
 
 const port = 5000;
 
-import { MongoClient } from 'mongodb';
+import { MongoClient, ObjectId } from 'mongodb';
 
 const client = new MongoClient(process.env.MONGODB_URI);
 
@@ -32,6 +32,17 @@ app.get('/', (req, res) => {
 app.post('/add-menu', async (req, res) => {
     const data = req.body;
     const result = await addMenuItem.insertOne(data)
+    res.send(result)
+})
+
+app.get('/add-menu', async (req, res) => {
+    const result = await addMenuItem.find().toArray()
+    res.send(result)
+})
+
+app.get('/add-menu/:id', async (req, res) => {
+    const { id } = req.params;
+    const result = await addMenuItem.findOne({ _id: new ObjectId(id) })
     res.send(result)
 })
 
