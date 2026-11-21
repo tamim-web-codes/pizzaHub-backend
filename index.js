@@ -77,6 +77,17 @@ app.patch('/edit-menu/:id', async (req, res) => {
     res.send(result)
 })
 
+app.delete('/delete-menu/:id', async (req, res) => {
+    const { id } = req.params;
+    const result = await addMenuItem.deleteOne({ _id: new ObjectId(id) })
+    res.send(result)
+})
+
+app.get('/vendor-menu/:vendorId', async () => {
+    const { vendorId } = req.params;
+    
+})
+
 
 app.listen(port, () => {
     console.log(`PizzaHub backend On Server ${port}`);
