@@ -35,16 +35,48 @@ app.post('/add-menu', async (req, res) => {
     res.send(result)
 })
 
-app.get('/add-menu', async (req, res) => {
-    const result = await addMenuItem.find().toArray()
+app.get('/my-menu', async (req, res) => {
+
+    const query = {}
+    const { search, category, location, sort } = req.query;
+    if (search) {
+        query.$or = [
+            { itemName: { $regex: search, $options: "i" } },
+            { category: { $regex: search, $options: "i" } },
+            { location: { $regex: search, $options: "i" } },
+        ];
+    }
+    if (category) {
+        query.category = {
+            $regex: `^${category}$`,
+            $options: 'i'
+        };
+    }
+    if (location) {
+        query.location = {
+            $regex: `^${location}$`,
+            $options: "i",
+        };
+    }
+    let sortOption = {};
+
+    if (sort === "low-to-high") {
+        sortOption = { price: 1 };
+    } else if (sort === "high-to-low") {
+        sortOption = { price: -1 };
+    }
+    const result = await addMenuItem.find(query).sort(sortOption).toArray()
     res.send(result)
 })
 
-app.get('/add-menu/:id', async (req, res) => {
+app.patch('/edit-menu/:id', async (req, res) => {
     const { id } = req.params;
-    const result = await addMenuItem.findOne({ _id: new ObjectId(id) })
+    const data = req.body;
+    const result = await addMenuItem.updateOne({ _id: new ObjectId(id) },
+        { $set: data })
     res.send(result)
 })
+
 
 app.listen(port, () => {
     console.log(`PizzaHub backend On Server ${port}`);
