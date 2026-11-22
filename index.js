@@ -39,6 +39,9 @@ app.get('/my-menu', async (req, res) => {
 
     const query = {}
     const { search, category, location, sort } = req.query;
+    if (req.query.vendorId) {
+        query.vendorId = req.query.vendorId
+    }
     if (search) {
         query.$or = [
             { itemName: { $regex: search, $options: "i" } },
@@ -69,6 +72,27 @@ app.get('/my-menu', async (req, res) => {
     res.send(result)
 })
 
+app.get("/vendor/overview/:vendorId", async (req, res) => {
+    const { vendorId } = req.params;
+
+    const totalMenuItem = await addMenuItem.countDocuments({ vendorId: vendorId })
+
+    const activeMenuItem = await addMenuItem.countDocuments({ vendorId: vendorId, isAvailable: true })
+
+    const pendingOrders = await orders.countDocuments({
+        vendorId: vendorId,
+        status: "pending",
+    });
+
+    // Accepted Orders
+    const acceptedOrders = await orders.countDocuments({
+        vendorId: vendorId,
+        status: "accepted",
+    });
+    res.send(totalMenuItem, acceptedOrders, pendingOrders, activeMenuItem)
+
+})
+
 app.patch('/edit-menu/:id', async (req, res) => {
     const { id } = req.params;
     const data = req.body;
@@ -83,10 +107,7 @@ app.delete('/delete-menu/:id', async (req, res) => {
     res.send(result)
 })
 
-app.get('/vendor-menu/:vendorId', async () => {
-    const { vendorId } = req.params;
-    
-})
+
 
 
 app.listen(port, () => {
