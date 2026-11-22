@@ -125,6 +125,12 @@ app.post('/order-now', async (req, res) => {
     res.send(result)
 })
 
+app.get('/order-now/:customerEmail', async (req, res) => {
+    const { customerEmail } = req.params;
+    const result = await order.find({ customerEmail: customerEmail }).toArray()
+    res.send(result)
+})
+
 
 
 
