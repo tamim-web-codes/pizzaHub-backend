@@ -23,7 +23,9 @@ export async function connectToMongoDB() {
 }
 const connectMongoClient = await connectToMongoDB()
 const database = connectMongoClient.db('pizzahub')
+const users = database.collection('user')
 const addMenuItem = database.collection('addMenuItem')
+const order = database.collection('order')
 
 app.get('/', (req, res) => {
     res.send({ messge: 'pizzahub connected' })
@@ -72,24 +74,12 @@ app.get('/my-menu', async (req, res) => {
     res.send(result)
 })
 
-app.get("/vendor/overview/:vendorId", async (req, res) => {
-    const { vendorId } = req.params;
+app.get("/brows-menu/:id", async (req, res) => {
+    const { id } = req.params;
+    const result = await addMenuItem.findOne({ _id: new ObjectId(id) })
+    res.send(result)
 
-    const totalMenuItem = await addMenuItem.countDocuments({ vendorId: vendorId })
 
-    const activeMenuItem = await addMenuItem.countDocuments({ vendorId: vendorId, isAvailable: true })
-
-    const pendingOrders = await orders.countDocuments({
-        vendorId: vendorId,
-        status: "pending",
-    });
-
-    // Accepted Orders
-    const acceptedOrders = await orders.countDocuments({
-        vendorId: vendorId,
-        status: "accepted",
-    });
-    res.send(totalMenuItem, acceptedOrders, pendingOrders, activeMenuItem)
 
 })
 
@@ -101,9 +91,37 @@ app.patch('/edit-menu/:id', async (req, res) => {
     res.send(result)
 })
 
+
+
+app.patch('/vendor-edit-profile/:id', async (req, res) => {
+    const { id } = req.params;
+    const { name, image } = req.body;
+
+    const updateData = {};
+
+    if (name) {
+        updateData.name = name;
+    }
+
+    if (image !== undefined) {
+        updateData.image = image;
+    }
+    const result = await users.updateOne({ _id: new ObjectId(id) }, {
+        $set: updateData
+    })
+    res.send(result)
+})
+
 app.delete('/delete-menu/:id', async (req, res) => {
     const { id } = req.params;
     const result = await addMenuItem.deleteOne({ _id: new ObjectId(id) })
+    res.send(result)
+})
+
+
+app.post('/order-now', async (req, res) => {
+    const data = req.body
+    const result = await order.insertOne(data)
     res.send(result)
 })
 
