@@ -70,9 +70,14 @@ app.post('/add-menu/count', async (req, res) => {
             });
         }
 
-        // Premium অথবা limit-এর নিচে থাকা Free user
+        // Premium vendor চাইলে item Premium করতে পারবে
+        const isPremiumItem =
+            vendor.premium === true && data.isPremiumItem === true;
+
+        // Menu item save
         const result = await addMenuItem.insertOne({
             ...data,
+            isPremiumItem,
             isActive: true
         });
 
@@ -84,7 +89,7 @@ app.post('/add-menu/count', async (req, res) => {
         });
 
     } catch (error) {
-        console.error(error);
+        console.error("Add Menu Error:", error);
 
         return res.status(500).send({
             success: false,
@@ -179,43 +184,102 @@ app.patch('/menu/availability/:id', async (req, res) => {
 
 
 app.get('/my-menu', async (req, res) => {
+    try {
+        const query = {};
+        const { search, category, location, sort, vendorId } = req.query;
 
-    const query = {}
-    const { search, category, location, sort } = req.query;
-    if (req.query.vendorId) {
-        query.vendorId = req.query.vendorId
-    }
-    if (search) {
-        query.$or = [
-            { itemName: { $regex: search, $options: "i" } },
-            { category: { $regex: search, $options: "i" } },
-            { location: { $regex: search, $options: "i" } },
-        ];
-    }
-    if (category) {
-        query.category = {
-            $regex: `^${category}$`,
-            $options: 'i'
-        };
-    }
-    if (location) {
-        query.location = {
-            $regex: `^${location}$`,
-            $options: "i",
-        };
-    }
-    let sortOption = {};
+        if (vendorId) {
+            query.vendorId = vendorId;
+        }
 
-    if (sort === "low-to-high") {
-        sortOption = { price: 1 };
-    } else if (sort === "high-to-low") {
-        sortOption = { price: -1 };
+        if (search) {
+            query.$or = [
+                { itemName: { $regex: search, $options: "i" } },
+                { category: { $regex: search, $options: "i" } },
+                { location: { $regex: search, $options: "i" } },
+            ];
+        }
+
+        if (category) {
+            query.category = {
+                $regex: `^${category}$`,
+                $options: "i"
+            };
+        }
+
+        if (location) {
+            query.location = {
+                $regex: `^${location}$`,
+                $options: "i",
+            };
+        }
+
+        let sortOption = {};
+
+        if (sort === "low-to-high") {
+            sortOption = { price: 1 };
+        } else if (sort === "high-to-low") {
+            sortOption = { price: -1 };
+        }
+
+        const result = await addMenuItem
+            .find(query)
+            .sort(sortOption)
+            .toArray();
+
+        // Vendor premium status check
+        const vendorIds = [...new Set(result.map(item => item.vendorId))];
+
+        const vendors = await users.find(
+            {
+                _id: {
+                    $in: vendorIds.map(id => new ObjectId(id))
+                }
+            },
+            {
+                projection: {
+                    premium: 1,
+                    name: 1,
+                    image: 1
+                }
+            }
+        ).toArray();
+
+        const vendorMap = new Map(
+            vendors.map(vendor => [
+                vendor._id.toString(),
+                vendor
+            ])
+        );
+
+        const menuItems = result.map(item => {
+            const vendor = vendorMap.get(item.vendorId?.toString());
+
+            return {
+                ...item,
+
+                vendorName: vendor?.name || "Unknown Vendor",
+                vendorImage: vendor?.image || "",
+
+                // Vendor subscription status
+                isPremiumVendor: vendor?.premium === true,
+
+                // Individual menu item premium status
+                isPremiumItem: item.isPremiumItem === true
+            };
+        });
+
+        res.send(menuItems);
+
+    } catch (error) {
+        console.error("My Menu Error:", error);
+
+        res.status(500).send({
+            success: false,
+            message: "Failed to fetch menu items"
+        });
     }
-    const result = await addMenuItem.find(query).sort(sortOption).toArray()
-    res.send(result)
-})
-
-
+});
 
 app.get("/brows-menu/:id", async (req, res) => {
     const { id } = req.params;
@@ -336,6 +400,7 @@ app.post('/payments/checkout-verify', async (req, res) => {
     const { status,
         payment_status,
         customer_email,
+        amount_total,
         metadata,
         payment_intent, } = await stripe.checkout.sessions.retrieve(sessionId)
     if (status === 'complete' && payment_status === 'paid') {
@@ -349,6 +414,7 @@ app.post('/payments/checkout-verify', async (req, res) => {
             sessionId,
             status,
             payment_status,
+            amount_total,
             customer_email,
             userId: metadata.userId,
             payment_date: new Date(),
@@ -679,6 +745,254 @@ app.patch(
         }
     }
 );
+
+
+app.get("/admin/menu-items", async (req, res) => {
+    try {
+        const {
+            search = "",
+            status = "all",
+            category = "all",
+        } = req.query;
+
+        // Build MongoDB query
+        const query = {};
+
+        // Status filter
+        if (status !== "all") {
+            query.status = status;
+        }
+
+        // Category filter
+        if (category !== "all") {
+            query.category = category;
+        }
+
+        // Search filter
+        if (search) {
+            query.itemName = {
+                $regex: search,
+                $options: "i",
+            };
+        }
+
+        // Fetch menu items
+        const menuItems = await addMenuItem
+            .find(query)
+            .sort({ createdAt: -1 })
+            .toArray();
+
+        // Add default values for old menu items
+        const formattedMenuItems = menuItems.map((item) => ({
+            ...item,
+            status: item.status || "pending",
+            isActive: item.isActive ?? false,
+        }));
+
+        res.status(200).send({
+            success: true,
+            total: formattedMenuItems.length,
+            menuItems: formattedMenuItems,
+        });
+
+    } catch (error) {
+        console.error("Get Admin Menu Items Error:", error);
+
+        res.status(500).send({
+            success: false,
+            message: "Failed to fetch menu items",
+        });
+    }
+});
+
+
+app.patch("/admin/menu-items/:id/status", async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+
+        const allowedStatus = [
+            "pending",
+            "approved",
+            "rejected",
+            "inactive"
+        ];
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({
+                success: false,
+                message: "Invalid menu item ID"
+            });
+        }
+
+        if (!allowedStatus.includes(status)) {
+            return res.status(400).send({
+                success: false,
+                message: "Invalid status"
+            });
+        }
+
+        const result = await addMenuItem.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status, updatedAt: new Date() } }
+        );
+
+        if (!result.matchedCount) {
+            return res.status(404).send({
+                success: false,
+                message: "Menu item not found"
+            });
+        }
+
+        res.send({
+            success: true,
+            message: `Menu item status updated to ${status}`
+        });
+
+    } catch (error) {
+        res.status(500).send({
+            success: false,
+            message: "Failed to update menu item status"
+        });
+    }
+});
+
+
+app.delete("/admin/menu-items/:id", async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({
+                success: false,
+                message: "Invalid menu item ID"
+            });
+        }
+
+        const result = await addMenuItem.deleteOne({
+            _id: new ObjectId(id)
+        });
+
+        if (!result.deletedCount) {
+            return res.status(404).send({
+                success: false,
+                message: "Menu item not found"
+            });
+        }
+
+        res.send({
+            success: true,
+            message: "Menu item deleted successfully"
+        });
+
+    } catch (error) {
+        res.status(500).send({
+            success: false,
+            message: "Failed to delete menu item"
+        });
+    }
+});
+
+
+app.get("/admin/transactions", async (req, res) => {
+    try {
+        // Database থেকে সব transaction নিয়ে আসছি
+        const allTransactions = await payments
+            .find()
+            .sort({ payment_date: -1 })
+            .toArray();
+
+        // প্রতিটি transaction-এর user information খুঁজছি
+        const transactions = await Promise.all(
+            allTransactions.map(async (transaction) => {
+                const user = await users.findOne(
+                    { _id: new ObjectId(transaction.userId) },
+                    {
+                        projection: {
+                            name: 1,
+                            email: 1,
+                            businessName: 1,
+                            image: 1,
+                        },
+                    }
+                );
+
+                return {
+                    ...transaction,
+                    vendorName: user?.businessName || user?.name || "Unknown Vendor",
+                    vendorEmail: user?.email || transaction.customer_email || "N/A",
+                };
+            })
+        );
+
+        res.status(200).send({
+            success: true,
+            transactions,
+        });
+
+    } catch (error) {
+        console.error("Admin Transactions Error:", error);
+
+        res.status(500).send({
+            success: false,
+            message: "Failed to fetch transactions",
+        });
+    }
+});
+
+
+
+app.get("/admin/overview", async (req, res) => {
+    try {
+        const [
+            totalUsers,
+            totalVendors,
+            totalCustomers,
+            totalPremiumVendors,
+            totalMenuItems,
+            pendingMenuItems,
+            totalTransactions,
+        ] = await Promise.all([
+            users.countDocuments(),
+
+            users.countDocuments({ role: "vendor" }),
+
+            users.countDocuments({ role: "customer" }),
+
+            // Premium users count
+            users.countDocuments({ premium: true }),
+
+            // Total menu items
+            addMenuItem.countDocuments(),
+
+            // Pending menu items
+            order.countDocuments({ status: "pending" }),
+
+            // Total transactions
+            payments.countDocuments(),
+        ]);
+
+        res.status(200).send({
+            success: true,
+            overview: {
+                totalUsers,
+                totalVendors,
+                totalCustomers,
+                totalPremiumVendors,
+                totalMenuItems,
+                pendingMenuItems,
+                totalTransactions,
+            },
+        });
+    } catch (error) {
+        console.error("Admin Overview Error:", error);
+
+        res.status(500).send({
+            success: false,
+            message: "Failed to load admin overview",
+        });
+    }
+});
 
 app.listen(port, () => {
     console.log(`PizzaHub backend On Server ${port}`);
