@@ -27,6 +27,7 @@ export async function connectToMongoDB() {
 const connectMongoClient = await connectToMongoDB()
 const database = connectMongoClient.db('pizzahub')
 const users = database.collection('user')
+const sessions = database.collection('session')
 const addMenuItem = database.collection('addMenuItem')
 const order = database.collection('order')
 const payments = database.collection('payments')
@@ -35,10 +36,61 @@ app.get('/', (req, res) => {
     res.send({ messge: 'pizzahub connected' })
 })
 
+const verifyToken = async (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    console.log(authHeader);
+    if (!authHeader) {
+        res.status(401).send({ message: 'Unauthorizad' })
+        return
+    }
+    const token = authHeader.split(' ')[1]
+    if (!token) {
+        res.status(401).send({ message: 'Unauthorizad' })
+        return
+    }
+    const query = { token }
+    const session = await sessions.findOne(query)
+    if (!session) {
+        res.status(401).send({ message: 'Unauthorizad' })
+        return
+    }
+    const userId = session.userId;
+    const userQuery = { _id: new ObjectId(userId) }
+    const user = await users.findOne(userQuery)
+    if (!user) {
+        res.status(401).send({ message: 'Unauthorizad' })
+        return
+    }
+    req.user = user
+    next()
+}
+
+const verifyVendor = async (req, res, next) => {
+    if (req.user.role !== 'vendor') {
+        res.status(403).send({ message: 'Forbidden' })
+        return
+    }
+    next()
+}
+
+const verifyCustomer = async (req, res, next) => {
+    if (req.user.role !== 'customer') {
+        res.status(403).send({ message: 'Forbidden' })
+        return
+    }
+    next()
+}
+
+const verifyAdmin = async (req, res, next) => {
+    if (req.user.role !== 'admin') {
+        res.status(403).send({ message: 'Forbidden' })
+        return
+    }
+    next()
+}
 
 
-
-app.post('/add-menu/count', async (req, res) => {
+app.post('/add-menu/count', verifyToken, verifyVendor, async (req, res) => {
     try {
         const data = req.body;
 
@@ -63,13 +115,13 @@ app.post('/add-menu/count', async (req, res) => {
 
         // শুধু Free user-এর জন্য ৩টি menu limit
         if (!vendor.premium && count >= 3) {
-            return res.status(403).send({
+            console.log('premium');
+            return res.status(402).send({
                 success: false,
                 limitReached: true,
                 message: "Free plan allows only 3 active menu items!"
             });
-        }
-
+        };
         // Premium vendor চাইলে item Premium করতে পারবে
         const isPremiumItem =
             vendor.premium === true && data.isPremiumItem === true;
@@ -99,7 +151,7 @@ app.post('/add-menu/count', async (req, res) => {
 });
 
 
-app.patch('/menu/availability/:id', async (req, res) => {
+app.patch('/menu/availability/:id', verifyToken, verifyVendor, async (req, res) => {
     try {
         const { id } = req.params;
         const { vendorId, isActive } = req.body;
@@ -281,7 +333,7 @@ app.get('/my-menu', async (req, res) => {
     }
 });
 
-app.get("/brows-menu/:id", async (req, res) => {
+app.get("/brows-menu/:id", verifyToken, async (req, res) => {
     const { id } = req.params;
     const result = await addMenuItem.findOne({ _id: new ObjectId(id) })
     res.send(result)
@@ -290,7 +342,7 @@ app.get("/brows-menu/:id", async (req, res) => {
 
 })
 
-app.patch('/edit-menu/:id', async (req, res) => {
+app.patch('/edit-menu/:id', verifyToken, verifyVendor, async (req, res) => {
     const { id } = req.params;
     const data = req.body;
     const result = await addMenuItem.updateOne({ _id: new ObjectId(id) },
@@ -300,7 +352,7 @@ app.patch('/edit-menu/:id', async (req, res) => {
 
 
 
-app.patch('/vendor-edit-profile/:id', async (req, res) => {
+app.patch('/vendor-edit-profile/:id', verifyToken, verifyVendor, async (req, res) => {
     const { id } = req.params;
     const { name, image } = req.body;
 
@@ -319,26 +371,25 @@ app.patch('/vendor-edit-profile/:id', async (req, res) => {
     res.send(result)
 })
 
-app.delete('/delete-menu/:id', async (req, res) => {
+app.delete('/delete-menu/:id', verifyToken, verifyVendor, async (req, res) => {
     const { id } = req.params;
     const result = await addMenuItem.deleteOne({ _id: new ObjectId(id) })
     res.send(result)
 })
 
-
-app.post('/order-now', async (req, res) => {
+app.post('/order-now', verifyToken, verifyCustomer, async (req, res) => {
     const data = req.body
     const result = await order.insertOne(data)
     res.send(result)
 })
 
-app.get('/order-now/:customerEmail', async (req, res) => {
+app.get('/order-now/:customerEmail', verifyToken, verifyCustomer, async (req, res) => {
     const { customerEmail } = req.params;
     const result = await order.find({ customerEmail: customerEmail }).toArray()
     res.send(result)
 })
 
-app.patch('/update-customer-profile/:id', async (req, res) => {
+app.patch('/update-customer-profile/:id', verifyToken, verifyCustomer, async (req, res) => {
     const { id } = req.params;
     const { name, image } = req.body
     const updateData = {};
@@ -357,8 +408,7 @@ app.patch('/update-customer-profile/:id', async (req, res) => {
     res.send(result)
 })
 
-
-app.patch('/order-canceld/:orderId', async (req, res) => {
+app.patch('/order-canceld/:orderId', verifyToken, verifyCustomer, async (req, res) => {
     try {
         const { orderId } = req.params;
 
@@ -395,7 +445,7 @@ app.patch('/order-canceld/:orderId', async (req, res) => {
 });
 
 
-app.post('/payments/checkout-verify', async (req, res) => {
+app.post('/payments/checkout-verify', verifyToken, verifyVendor, async (req, res) => {
     const { sessionId } = req.body
     const { status,
         payment_status,
@@ -423,7 +473,7 @@ app.post('/payments/checkout-verify', async (req, res) => {
 
         const result = await payments.insertOne(payment)
         const query = { _id: new ObjectId(metadata.userId) }
-
+        console.log(result);
         const updatedDoc = {
             $set: {
                 premium: true,
@@ -437,7 +487,7 @@ app.post('/payments/checkout-verify', async (req, res) => {
     res.send({ success: false, message: 'Payment verification failed' })
 })
 
-app.get('/vendor/:id/premium', async (req, res) => {
+app.get('/vendor/:id/premium', verifyToken, verifyVendor, async (req, res) => {
     try {
         const { id } = req.params;
 
@@ -475,14 +525,14 @@ app.get('/vendor/:id/premium', async (req, res) => {
     }
 });
 
-app.get('/vendor-to-customer-order/:vendorId', async (req, res) => {
+app.get('/vendor-to-customer-order/:vendorId', verifyToken, verifyVendor, async (req, res) => {
     const { vendorId } = req.params;
     const result = await order.find({ vendorId: vendorId }).toArray()
     res.send(result)
 })
 
 
-app.patch('/vendor-to-customer-status/:orderId', async (req, res) => {
+app.patch('/vendor-to-customer-status/:orderId', verifyToken, verifyVendor, async (req, res) => {
     const { orderId } = req.params;
     const { status, vendorId } = req.body;
 
@@ -519,7 +569,7 @@ app.patch('/vendor-to-customer-status/:orderId', async (req, res) => {
     });
 })
 
-app.get("/vendor-overview/:vendorId", async (req, res) => {
+app.get("/vendor-overview/:vendorId", verifyToken, verifyVendor, async (req, res) => {
     try {
         const { vendorId } = req.params;
 
@@ -585,7 +635,7 @@ app.get("/vendor-overview/:vendorId", async (req, res) => {
 });
 
 
-app.get("/customer-order-overview/:customerId", async (req, res) => {
+app.get("/customer-order-overview/:customerId", verifyToken, verifyCustomer, async (req, res) => {
     try {
         const { customerId } = req.params;
 
@@ -640,7 +690,7 @@ app.get("/customer-order-overview/:customerId", async (req, res) => {
 });
 
 
-app.get("/admin/users", async (req, res) => {
+app.get("/admin/users", verifyToken, async (req, res) => {
     try {
         const { search = "", role = "all" } = req.query;
 
@@ -668,6 +718,7 @@ app.get("/admin/users", async (req, res) => {
                     isBlocked: 1,
                     businessName: 1,
                     subscriptionPlan: 1,
+                    premium: 1,
                 },
             }
         ).toArray();
@@ -686,7 +737,7 @@ app.get("/admin/users", async (req, res) => {
 });
 
 app.patch(
-    "/admin/users/:id/block",
+    "/admin/users/:id/block", verifyToken, verifyAdmin,
 
     async (req, res) => {
         try {
@@ -747,7 +798,7 @@ app.patch(
 );
 
 
-app.get("/admin/menu-items", async (req, res) => {
+app.get("/admin/menu-items", verifyToken, verifyAdmin, async (req, res) => {
     try {
         const {
             search = "",
@@ -806,7 +857,7 @@ app.get("/admin/menu-items", async (req, res) => {
 });
 
 
-app.patch("/admin/menu-items/:id/status", async (req, res) => {
+app.patch("/admin/menu-items/:id/status", verifyToken, verifyAdmin, async (req, res) => {
     try {
         const { id } = req.params;
         const { status } = req.body;
@@ -858,7 +909,7 @@ app.patch("/admin/menu-items/:id/status", async (req, res) => {
 });
 
 
-app.delete("/admin/menu-items/:id", async (req, res) => {
+app.delete("/admin/menu-items/:id", verifyToken, verifyAdmin, async (req, res) => {
     try {
         const { id } = req.params;
 
@@ -942,7 +993,7 @@ app.get("/admin/transactions", async (req, res) => {
 
 
 
-app.get("/admin/overview", async (req, res) => {
+app.get("/admin/overview", verifyToken, verifyAdmin, async (req, res) => {
     try {
         const [
             totalUsers,
@@ -993,6 +1044,79 @@ app.get("/admin/overview", async (req, res) => {
         });
     }
 });
+
+app.get('/featured-menu', async (req, res) => {
+    try {
+        const featuredItems = await addMenuItem
+            .find({
+                status: "approved",
+                isActive: true,
+                isPremiumItem: true
+            })
+            .sort({ createdAt: -1 })
+            .limit(6)
+            .toArray();
+
+        // Vendor IDs collect
+        const vendorIds = [
+            ...new Set(featuredItems.map(item => item.vendorId))
+        ];
+
+        // Vendor information fetch
+        const vendors = await users.find(
+            {
+                _id: {
+                    $in: vendorIds.map(id => new ObjectId(id))
+                }
+            },
+            {
+                projection: {
+                    name: 1,
+                    image: 1,
+                    email: 1,
+                    businessName: 1
+                }
+            }
+        ).toArray();
+
+        // Vendor map
+        const vendorMap = new Map(
+            vendors.map(vendor => [
+                vendor._id.toString(),
+                vendor
+            ])
+        );
+
+        // Attach vendor information
+        const result = featuredItems.map(item => {
+            const vendor = vendorMap.get(
+                item.vendorId?.toString()
+            );
+
+            return {
+                ...item,
+                vendorName: vendor?.businessName || vendor?.name || "Unknown Vendor",
+                vendorImage: vendor?.image || "",
+                vendorEmail: vendor?.email || ""
+            };
+        });
+
+        res.status(200).send({
+            success: true,
+            count: result.length,
+            result
+        });
+
+    } catch (error) {
+        console.error("Featured Menu Error:", error);
+
+        res.status(500).send({
+            success: false,
+            message: "Failed to fetch featured menu items!"
+        });
+    }
+});
+
 
 app.listen(port, () => {
     console.log(`PizzaHub backend On Server ${port}`);
